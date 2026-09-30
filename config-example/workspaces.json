@@ -1,0 +1,13 @@
+{
+  "workspaces": [
+    {
+      "label": "Workspace 1",
+      "token_env": "WORKSPACE_1_TOKEN",
+      "default": true
+    },
+    {
+      "label": "Workspace 2",
+      "token_env": "WORKSPACE_2_TOKEN"
+    }
+  ]
+}
