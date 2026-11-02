@@ -24,13 +24,27 @@ WORKSPACES = load_workspaces()
 DEFAULT_INDEX = get_default_index(WORKSPACES)
 
 
+# Sentinel index for the "generate locally only" option (never the default).
+# It is presented as one extra entry after the real Slack workspaces.
+LOCAL_ONLY_INDEX = len(WORKSPACES)
+
+
 def select_workspace_with_countdown(timeout=5):
-    """Show workspace selection with countdown. Default is selected if no input."""
+    """Show workspace selection with countdown. Default is selected if no input.
+
+    Besides the real Slack workspaces, an extra option is offered to only
+    generate the audio file locally, without uploading to Slack. That option is
+    never the default and must be chosen explicitly.
+    """
     print("Selecione o workspace do Slack:")
     for i, ws in enumerate(WORKSPACES):
         marker = " [default]" if i == DEFAULT_INDEX else ""
         print(f"  {i + 1}. {ws['label']}{marker}")
+    print(f"  {LOCAL_ONLY_INDEX + 1}. Apenas gerar localmente (não enviar ao Slack)")
     print()
+
+    # Total number of selectable options, including the local-only entry.
+    num_options = len(WORKSPACES) + 1
 
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
@@ -39,7 +53,7 @@ def select_workspace_with_countdown(timeout=5):
         tty.setcbreak(fd)
 
         for remaining in range(timeout, 0, -1):
-            msg = f"\rEnviando para '{WORKSPACES[DEFAULT_INDEX]['label']}' em {remaining}s (digite 1-{len(WORKSPACES)} para trocar): "
+            msg = f"\rEnviando para '{WORKSPACES[DEFAULT_INDEX]['label']}' em {remaining}s (digite 1-{num_options} para trocar): "
             sys.stdout.write(msg)
             sys.stdout.flush()
 
@@ -50,6 +64,9 @@ def select_workspace_with_countdown(timeout=5):
                 sys.stdout.flush()
                 try:
                     choice = int(char) - 1
+                    if choice == LOCAL_ONLY_INDEX:
+                        print("Selecionado: apenas gerar localmente (não enviar ao Slack)")
+                        return choice
                     if 0 <= choice < len(WORKSPACES):
                         print(f"Selecionado: {WORKSPACES[choice]['label']}")
                         return choice
@@ -70,17 +87,24 @@ def select_workspace_with_countdown(timeout=5):
 
 # Workspace selection with countdown
 choice = select_workspace_with_countdown(timeout=5)
-selected_workspace = WORKSPACES[choice]
-slack_token = os.getenv(selected_workspace['token_env'])
+local_only = choice == LOCAL_ONLY_INDEX
 
-if not slack_token:
-    print(f"Token não encontrado para '{selected_workspace['label']}'. Verifique o arquivo .env (variável {selected_workspace['token_env']}).")
-    exit(1)
+if local_only:
+    print("\n[LOG] Modo local: os arquivos serão apenas gerados, sem envio ao Slack.\n")
+    client = None
+    MY_USER_ID = None
+else:
+    selected_workspace = WORKSPACES[choice]
+    slack_token = os.getenv(selected_workspace['token_env'])
 
-print(f"\n[LOG] Workspace selecionado: {selected_workspace['label']}\n")
+    if not slack_token:
+        print(f"Token não encontrado para '{selected_workspace['label']}'. Verifique o arquivo .env (variável {selected_workspace['token_env']}).")
+        exit(1)
 
-# Initialize Slack client
-client = WebClient(token=slack_token)
+    print(f"\n[LOG] Workspace selecionado: {selected_workspace['label']}\n")
+
+    # Initialize Slack client
+    client = WebClient(token=slack_token)
 
 
 # Get target user ID (handles both user tokens and bot tokens)
@@ -107,8 +131,9 @@ def get_target_user_id():
         exit(1)
 
 
-MY_USER_ID = get_target_user_id()
-print(f"[LOG] Target user ID: {MY_USER_ID}\n")
+if not local_only:
+    MY_USER_ID = get_target_user_id()
+    print(f"[LOG] Target user ID: {MY_USER_ID}\n")
 
 # Define paths
 input_folder = Path(INPUT_FOLDER)
@@ -148,6 +173,10 @@ else:
             subprocess.run(cmd, check=True, capture_output=True)
             print(f"✓ Converted: {mp3_file.name}")
             generated_files.append(mp3_file.stem)
+
+            if local_only:
+                print(f"✓ Gerado localmente: {mp3_file}")
+                continue
 
             # Send to Slack
             try:
